@@ -27,6 +27,7 @@ class Mod:
         "delete_delay": -1,
         "reinvite_on_unban": False,
         "current_tempbans": [],
+        "mute_role": None
     }
 
     default_channel_settings = {"ignored": False}
@@ -838,9 +839,13 @@ class Mod:
     @commands.group()
     @commands.guild_only()
     @checks.mod_or_permissions(manage_channel=True)
-    async def mute(self, ctx: commands.Context):
-        """Mutes user in the channel/server"""
-        pass
+    async def mute(self, ctx: commands.Context, user: discord.Member, *, reason: str = None):
+        """Mutes user in the channel/server
+        
+        Default to server."""
+        
+        if ctx.invoked_subcommand is None:
+            await ctx.invoke(self.guild_mute, user=user, reason=reason)
 
     @mute.command(name="voice")
     @commands.guild_only()
@@ -935,24 +940,64 @@ class Mod:
         guild = ctx.guild
         user_voice_state = user.voice
         if reason is None:
-            audit_reason = "server mute requested by {} (ID {})".format(author, author.id)
+            audit_reason = _("Server mute requested by {} (ID {})").format(author, author.id)
         else:
-            audit_reason = "server mute requested by {} (ID {}). Reason: {}".format(
+            audit_reason = _("Server mute requested by {} (ID {}). Reason: {}").format(
                 author, author.id, reason
             )
 
-        mute_success = []
-        for channel in guild.channels:
-            if not isinstance(channel, discord.TextChannel):
-                if channel.permissions_for(user).speak:
-                    overwrites = channel.overwrites_for(user)
-                    overwrites.speak = False
-                    audit_reason = get_audit_reason(ctx.author, reason)
-                    await channel.set_permissions(user, overwrite=overwrites, reason=audit_reason)
+        mute_role = await self.settings.guild(guild).mute_role()
+        if not guild.me.guild_permissions.manage_roles:
+            # no permission for adding roles, using channel perms
+            mute_success = []
+            for channel in guild.channels:
+                if not isinstance(channel, discord.TextChannel):
+                    if channel.permissions_for(user).speak:
+                        overwrites = channel.overwrites_for(user)
+                        overwrites.speak = False
+                        audit_reason = get_audit_reason(ctx.author, reason)
+                        await channel.set_permissions(
+                            user, 
+                            overwrite=overwrites, 
+                            reason=audit_reason
+                        )
+                else:
+                    success, issue = await self.mute_user(
+                        guild, 
+                        channel, 
+                        author, 
+                        user, 
+                        audit_reason
+                    )
+                    mute_success.append((success, issue))
+                await asyncio.sleep(0.1)
+        else:
+            if mute_role is None:
+                perms = discord.Permissions(add_reactions=False, send_messages=False)
+                mute_role = await guild.create_role(
+                    name=_("Muted"), 
+                    permissions=perms, 
+                    reason=_("Creating Red mute role.")
+                )
+                await self.settings.guild(guild).mute_role.set(mute_role.id)
+                await ctx.send(
+                    _(
+                        f"I created a role for muting the members. It is named `{mute_role.name}`."
+                        "\nFeel free to edit it and modify the role order, just remember that I "
+                        "need to be upper so I can give that role to the users."
+                    )
+                )
             else:
-                success, issue = await self.mute_user(guild, channel, author, user, audit_reason)
-                mute_success.append((success, issue))
-            await asyncio.sleep(0.1)
+                mute_role = discord.utils.get(guild.roles, id=mute_role)
+            if mute_role.position > guild.me.top_role.position:
+                await ctx.send(
+                    _(
+                        "The mute role is higher than me, please move it below my top role."
+                    )
+                )
+                return
+            await user.add_roles(mute_role, reason=audit_reason)
+
         await ctx.send(_("User has been muted in this server."))
         try:
             await modlog.create_case(
@@ -1004,11 +1049,13 @@ class Mod:
     @commands.group()
     @commands.guild_only()
     @checks.mod_or_permissions(manage_channel=True)
-    async def unmute(self, ctx: commands.Context):
+    async def unmute(self, ctx: commands.Context, user: discord.User, *, reason: str = None):
         """Unmutes user in the channel/server
 
-        Defaults to channel"""
-        pass
+        Defaults to server."""
+        
+        if ctx.invoked_subcommand is None:
+            await ctx.invoke(self.guild_unmute, user=user, reason=reason)
 
     @unmute.command(name="voice")
     @commands.guild_only()
@@ -1098,18 +1145,29 @@ class Mod:
         guild = ctx.guild
         author = ctx.author
         channel = ctx.channel
-
-        unmute_success = []
-        for channel in guild.channels:
-            if not isinstance(channel, discord.TextChannel):
-                if channel.permissions_for(user).speak is False:
-                    overwrites = channel.overwrites_for(user)
-                    overwrites.speak = None
-                    audit_reason = get_audit_reason(author, reason)
-                    await channel.set_permissions(user, overwrite=overwrites, reason=audit_reason)
-            success, message = await self.unmute_user(guild, channel, author, user)
-            unmute_success.append((success, message))
-            await asyncio.sleep(0.1)
+        mute_role = discord.utils.get(guild.roles, id=await self.settings.guild(guild).mute_role())
+        
+        if mute_role in user.roles:
+            if mute_role.position > guild.me.top_role.position:
+                await ctx.send(
+                    _(
+                        "The mute role is higher than me, please move it below my top role."
+                    )
+                )
+                return
+            await user.remove_roles(mute_role)
+        else:
+            unmute_success = []
+            for channel in guild.channels:
+                if not isinstance(channel, discord.TextChannel):
+                    if channel.permissions_for(user).speak is False:
+                        overwrites = channel.overwrites_for(user)
+                        overwrites.speak = None
+                        audit_reason = get_audit_reason(author, reason)
+                        await channel.set_permissions(user, overwrite=overwrites, reason=audit_reason)
+                success, message = await self.unmute_user(guild, channel, author, user)
+                unmute_success.append((success, message))
+                await asyncio.sleep(0.1)
         await ctx.send(_("User has been unmuted in this server."))
         try:
             await modlog.create_case(
