@@ -407,7 +407,7 @@ def main_menu():
         print("4. Create Instance")
         print("5. Remove Instance")
         print("6. Debug information (use this if having issues with the launcher or bot)")
-        print("7. Reinstall Red")
+        print("7. Remove all data")
         print("0. Exit")
         choice = user_choice()
         if choice == "1":
@@ -434,29 +434,7 @@ def main_menu():
         elif choice == "6":
             debug_info()
         elif choice == "7":
-            while True:
-                clear_screen()
-                print("==== Reinstall Red ====")
-                print(
-                    "1. Reinstall Red requirements (discard code changes, keep data and 3rd party cogs)"
-                )
-                print("2. Reset all data")
-                print("3. Factory reset (discard code changes, reset all data)")
-                print("\n")
-                print("0. Back")
-                choice = user_choice()
-                if choice == "1":
-                    if development_choice():
-                        wait()
-                elif choice == "2":
-                    loop.run_until_complete(reset_red())
-                    wait()
-                elif choice == "3":
-                    loop.run_until_complete(reset_red())
-                    development_choice(can_go_back=False)
-                    wait()
-                elif choice == "0":
-                    break
+            loop.run_until_complete(reset_red())
         elif choice == "0":
             break
         clear_screen()
