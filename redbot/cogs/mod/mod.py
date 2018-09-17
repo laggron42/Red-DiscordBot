@@ -359,11 +359,13 @@ class Mod:
 
         self.registration_task = self.bot.loop.create_task(self._casetype_registration())
         self.tban_expiry_task = self.bot.loop.create_task(self.check_tempban_expirations())
+        self.mute_expiry_task = self.bot.loop.create_task(self.check_mute_expirations(loop=True))
         self.last_case = defaultdict(dict)
 
     def __unload(self):
         self.registration_task.cancel()
         self.tban_expiry_task.cancel()
+        self.mute_expiry_task.cancel()
 
     async def _casetype_registration(self):
         casetypes_to_register = [
@@ -470,6 +472,70 @@ class Mod:
             await modlog.register_casetypes(casetypes_to_register)
         except RuntimeError:
             pass
+
+    async def check_mute_expirations(self, loop: bool = False):
+        """
+        Check if the user should be unmuted because of the timer set.
+
+        Arguments
+        ---------
+        loop: bool
+            Defines if the process should be optimized for a background
+            task. If :py:obj:`True` is passed, the bot will use
+            ``asyncio.sleep(10)`` at the end of the process.
+
+        Returns
+        -------
+        unmuted: list
+            A list of :class:`Mute` objects representing the unmuted
+            members.
+        """
+
+        unmuted = []
+
+        async def check_in_dict(data, action):
+            to_remove = []
+            for item_id, data in settings.items():
+                if action == Mute.GUILD:
+                    guild = await self.bot.get_guild(item_id)
+                    if not guild:
+                        to_remove.append(item_id)
+                        continue
+                else:
+                    channel = await self.bot.get_channel(item_id)
+                    if not channel:
+                        to_remove.append(item_id)
+                        continue
+                    guild = channel.guild
+                member = await guild.get_member(data["user"])
+                if not member:
+                    to_remove.append(item_id)
+                    continue
+                muted_until = datetime.strptime(data["until"], "%Y-%m-%d %H:%M:%S.%f")
+                now = datetime.now()
+                mute = Mute(
+                    bot=self.bot,
+                    action=action,
+                    user=await guild.get_member(data["user"]),
+                    author=await guild.get_member(data["author"]),
+                    reason="End of timed mute.",
+                )
+                if muted_until > now:
+                    await mute.unmute()
+                    unmuted.append(mute)
+
+            if to_remove:
+                for item in to_remove:
+                    del data[item]
+
+        settings = await self.settings.custom("TIMER").all()
+        types = [Mute.CHANNEL, Mute.VOICE, Mute.GUILD]
+        for x in types:
+            await check_in_dict(settings[x], x)
+        if loop:
+            await asyncio.sleep(10)
+        else:
+            return unmuted
 
     @commands.group()
     @commands.guild_only()
