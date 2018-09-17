@@ -1,6 +1,7 @@
 import asyncio
 from datetime import datetime, timedelta
 from collections import deque, defaultdict, namedtuple
+from typing import Union
 
 import discord
 
