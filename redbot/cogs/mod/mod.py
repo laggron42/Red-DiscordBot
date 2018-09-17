@@ -18,6 +18,313 @@ from redbot.core.utils.common_filters import filter_invites, filter_various_ment
 _ = Translator("Mod", __file__)
 
 
+class Mute:
+    """
+    Represents a mute.
+
+    Arguments
+    ---------
+    bot: ~redbot.core.bot.Red
+        The Red Client session.
+    action: Union["Mute.CHANNEL", "Mute.GUILD", "Mute.VOICE"]
+        The type of the mute you want to perform.
+    user: discord.Member
+        The user to mute in its guild.
+    author: discord.Member
+        The author of the mute, for audit logs reasons.
+    channel: Union[discord.TextChannel, discord.VoiceChannel]
+        The channel you want to mute the user on. If you want a guild
+        mute, you can omit this argument.
+    reason: str
+        Optional, the reason of the mute.
+    audit_reason: str
+        The reason to set in the audit logs. If omitted, it will
+        be generated automatically.
+    time: datetime.timedelta
+        The time until the member will be unmuted. If omitted, the
+        mute will be permanent until unmuted manually.
+
+    Raises
+    ------
+    TypeError
+        The channel you gave does not match with the mute type.
+    """
+
+    def __init__(
+        self,
+        bot: Red,
+        action: Union["Mute.CHANNEL", "Mute.GUILD", "Mute.VOICE"],
+        user: discord.Member,
+        author: discord.Member = None,
+        channel: Union[discord.TextChannel, discord.VoiceChannel] = None,
+        reason: str = None,
+        audit_reason: str = None,
+        time: timedelta = None,
+    ):
+        self.type = action  # we don't want to overwrite built-in type value
+        self.user = user
+        self.author = author
+        self.guild = author.guild
+        self.reason = reason
+        if audit_reason is None:
+            self.audit_reason = get_audit_reason(author, reason)
+        else:
+            self.audit_reason = audit_reason
+        self.timedelta = time
+        if self.type is not self.GUILD:
+            if self.channel is None:
+                raise TypeError("You're not providing any channel for a non-guild mute.")
+            if self.type is self.CHANNEL and not isinstance(self.channel, discord.TextChannel):
+                raise TypeError(f"A discord.TextChannel was excepted, got {type(channel)}")
+            if self.type is self.VOICE and not isinstance(self.channel, discord.VoiceChannel):
+                raise TypeError(f"A discord.VoiceChannel was excepted, got {type(channel)}")
+            self.channel = channel
+        else:
+            self.channel = self.guild.text_channels
+        # creating another config under the Mod cog only for mute
+        self.settings = Config.get_conf(None, 4961522000, force_registration=True, cog_name="Mod")
+        self.settings.register_member(perms_cache={})
+        self.settings.register_custom("TIMER", user=None, author=None, guild=None, until=None)
+
+    @staticmethod
+    def are_overwrites_empty(overwrites):
+        """
+        There is currently no cleaner way to check if a
+        PermissionOverwrite object is empty.
+        """
+        return [p for p in iter(overwrites)] == [p for p in iter(discord.PermissionOverwrite())]
+
+    async def _mute(self, channel: discord.TextChannel):
+        overwrites = channel.overwrites_for(self.user)
+        permissions = channel.permissions_for(self.user)
+        perms_cache = await self.settings.member(self.user).perms_cache()
+
+        if overwrites.send_messages is False or permissions.send_messages is False:
+            raise TypeError("The user is already muted.")
+
+        elif not await is_allowed_by_hierarchy(
+            self.bot, self.settings, self.guild, self.author, self.user
+        ):
+            raise RuntimeError("I am not allowed by the guild hierarchy.")
+
+        perms_cache[str(channel.id)] = {
+            "send_messages": overwrites.send_messages,
+            "add_reactions": overwrites.add_reactions,
+        }
+        overwrites.update(send_messages=False, add_reactions=False)
+
+        await channel.set_permissions(self.user, overwrite=overwrites, reason=self.audit_reason)
+        await self.settings.member(self.user).perms_cache.set(perms_cache)
+        return True
+
+    async def _voice_mute(self, channel: discord.VoiceChannel):
+        overwrites = channel.overwrites_for(self.user)
+        if overwrites.speak is False:
+            raise TypeError("The user is already muted.")
+        elif not await is_allowed_by_hierarchy(
+            self.bot, self.settings, self.guild, self.author, self.user
+        ):
+            raise RuntimeError("I am not allowed by the guild hierarchy.")
+        overwrites.speak = False
+        await channel.set_permissions(self.user, overwrite=overwrites, reason=self.audit_reason)
+        return True
+
+    async def _guild_mute(self):
+        mute_success = []
+        for channel in self.guild.channels:
+            if isinstance(channel, discord.VoiceChannel):
+                if channel.permissions_for(self.user).speak:
+                    try:
+                        await self._voice_mute(channel)
+                    except (RuntimeError, TypeError):
+                        pass
+                    else:
+                        mute_success.append(channel)
+            elif isinstance(channel, discord.TextChannel):
+                try:
+                    await self._mute(channel)
+                except (RuntimeError, TypeError):
+                    pass
+                else:
+                    mute_success.append(channel)
+            await asyncio.sleep(0.1)
+        return mute_success
+
+    async def _unmute(self, channel: discord.TextChannel):
+        overwrites = channel.overwrites_for(self.user)
+        permissions = channel.permissions_for(self.user)
+        perms_cache = await self.settings.member(self.user).perms_cache()
+
+        if overwrites.send_messages or permissions.send_messages:
+            raise TypeError("The user is not muted.")
+
+        elif not await is_allowed_by_hierarchy(
+            self.bot, self.settings, self.guild, self.author, self.user
+        ):
+            raise RuntimeError("I am not allowed by the guild hierarchy.")
+
+        if channel.id in perms_cache:
+            old_values = perms_cache[channel.id]
+        else:
+            old_values = {"send_messages": None, "add_reactions": None}
+        overwrites.update(
+            send_messages=old_values["send_messages"], add_reactions=old_values["add_reactions"]
+        )
+        is_empty = self.are_overwrites_empty(overwrites)
+
+        if not is_empty:
+            await channel.set_permissions(
+                self.user, overwrite=overwrites, reason=self.audit_reason
+            )
+        else:
+            await channel.set_permissions(self.user, overwrite=None, reason=self.audit_reason)
+        try:
+            del perms_cache[channel.id]
+        except KeyError:
+            pass
+        else:
+            await self.settings.member(self.user).perms_cache.set(perms_cache)
+        return True
+
+    async def _voice_unmute(self, channel: discord.VoiceChannel):
+        overwrites = channel.overwrites_for(self.user)
+        if overwrites.speak is None:
+            raise TypeError("The user not muted.")
+        elif not await is_allowed_by_hierarchy(
+            self.bot, self.settings, self.guild, self.author, self.user
+        ):
+            raise RuntimeError("I am not allowed by the guild hierarchy.")
+        overwrites.speak = None
+        await channel.set_permissions(self.user, overwrite=overwrites, reason=self.audit_reason)
+
+    async def _guild_unmute(self):
+        mute_success = []
+        for channel in self.guild.channels:
+            if isinstance(channel, discord.VoiceChannel):
+                if channel.permissions_for(self.user).speak:
+                    try:
+                        await self._voice_unmute(channel)
+                    except (RuntimeError, TypeError):
+                        pass
+                    else:
+                        mute_success.append(channel)
+            elif isinstance(channel, discord.TextChannel):
+                try:
+                    await self._unmute(channel)
+                except (RuntimeError, TypeError):
+                    pass
+                else:
+                    mute_success.append(channel)
+            await asyncio.sleep(0.1)
+        return mute_success
+
+    async def _start_timer(self, time: timedelta):
+        muted_on = datetime.now()
+        unmuted_on = muted_on + time
+        data = {
+            "user": self.user.id,
+            "author": self.author.id,
+            "on": str(muted_on),
+            "until": str(unmuted_on),
+        }
+        identifier = self.guild.id if self.type is self.GUILD else self.channel.id
+        await self.settings.custom("TIME", str(self.type), identifier).set(data)
+
+    async def mute(self, timer: bool = True):
+        """
+        Mute a member in the guild, following the action requested.
+
+        Arguments
+        ---------
+        timer: bool
+            Pass :py:obj:`False` to disable the timed mute for this action.
+
+        Returns
+        -------
+        bool
+            :py:obj:`True` if successful.
+
+            .. important:: A :py:class:`list` is returned with the channels
+                successfully updated for guild mute instead of a :py:class:`bool`.
+
+        Raises
+        ------
+        TypeError
+            The user is already muted in that channel.
+        RuntimeError
+            The bot is not allowed by hierarchy to proceed.
+        ~discord.errors.Forbidden
+            The bot doesn't have the right permissions to do this.
+        ~discord.errors.HTTPException
+            Muting the user failed.
+        """
+        if self.type == self.CHANNEL:
+            return await self._mute(self.channel)
+
+        if self.type == self.GUILD:
+            return await self._voice_mute(self.channel)
+
+        if self.type == self.GUILD:
+            # if you want to add role mute, just change these
+            # lines and call a new function
+            return await self._guild_mute()
+
+        if timer and self.deltatime:
+            await self._start_timer(self.deltatime)
+
+    async def unmute(self):
+        """
+        Unmute a member in the guild, following the action previously requested.
+
+        Returns
+        -------
+        bool
+            :py:obj:`True` if successful.
+
+            .. important:: A :py:class:`list` is returned with the channels
+                successfully updated for guild mute instead of a :py:class:`bool`.
+
+        Raises
+        ------
+        TypeError
+            The user is not muted in that channel.
+        RuntimeError
+            The bot is not allowed by hierarchy to proceed.
+        ~discord.errors.Forbidden
+            The bot doesn't have the right permissions to do this.
+        ~discord.errors.HTTPException
+            Unmuting the user failed.
+        """
+        if self.type == self.CHANNEL:
+            return await self._unmute(self.channel)
+
+        if self.type == self.GUILD:
+            return await self._voice_unmute(self.channel)
+
+        if self.type == self.GUILD:
+            # if you want to add role unmute, just change these
+            # lines and call a new function
+            return await self._guild_unmute()
+
+    class VOICE:
+        """Represents a voice mute"""
+
+        def __str__(self):
+            return "VOICE"
+
+    class CHANNEL:
+        """Represents a channel mute"""
+
+        def __str__(self):
+            return "CHANNEL"
+
+    class GUILD:
+        """Represents a guild mute"""
+
+        def __str__(self):
+            return "GUILD"
+
+
 @cog_i18n(_)
 class Mod:
     """Moderation tools."""
