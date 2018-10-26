@@ -139,6 +139,23 @@ async def prev_page(
     return await menu(ctx, pages, controls, message=message, page=page, timeout=timeout)
 
 
+async def stay(
+    ctx: commands.Context,
+    pages: list,
+    controls: dict,
+    message: discord.Message,
+    page: int,
+    timeout: float,
+    emoji: str,
+):
+    perms = message.channel.permissions_for(ctx.me)
+    if perms.manage_messages:  # Can manage messages, so remove react
+        try:
+            await message.remove_reaction(emoji, ctx.author)
+        except discord.NotFound:
+            pass
+    return await menu(ctx, pages, controls, message=message, page=page, timeout=timeout)
+
 async def close_menu(
     ctx: commands.Context,
     pages: list,
