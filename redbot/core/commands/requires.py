@@ -135,12 +135,11 @@ class PrivilegeLevel(enum.IntEnum):
         # admin or mod role.
         guild_settings = ctx.bot._config.guild(ctx.guild)
 
-        member_snowflakes = ctx.author._roles  # DEP-WARN
         for snowflake in await guild_settings.admin_role():
-            if member_snowflakes.has(snowflake):  # DEP-WARN
+            if ctx.author.get_role(snowflake) is not None:
                 return cls.ADMIN
         for snowflake in await guild_settings.mod_role():
-            if member_snowflakes.has(snowflake):  # DEP-WARN
+            if ctx.author.get_role(snowflake) is not None:
                 return cls.MOD
 
         return cls.NONE
@@ -591,8 +590,12 @@ class Requires:
         channels = []
         if author.voice is not None:
             channels.append(author.voice.channel)
-        channels.append(ctx.channel)
-        category = ctx.channel.category
+        if isinstance(ctx.channel, discord.Thread):
+            channels.append(ctx.channel.parent)
+            category = ctx.channel.parent.category
+        else:
+            channels.append(ctx.channel)
+            category = ctx.channel.category
         if category is not None:
             channels.append(category)
 

@@ -50,6 +50,9 @@ HUMANIZED_PERM = {
     "manage_roles": "Manage Roles",
     "manage_webhooks": "Manage Webhooks",
     "manage_emojis": "Manage Emojis",
+    "use_slash_commands": "Use Slash Commands",
+    "request_to_speak": "Request to Speak",
+    "manage_events": "Manage Events",
 }
 
 

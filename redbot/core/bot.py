@@ -810,7 +810,7 @@ class Red(
             return False
 
         if guild:
-            assert isinstance(channel, discord.abc.GuildChannel)  # nosec
+            assert isinstance(channel, (discord.abc.GuildChannel, discord.Thread))  # nosec
             if not channel.permissions_for(guild.me).send_messages:
                 return False
             if not (await self.ignored_channel_or_guild(message)):
@@ -1318,9 +1318,8 @@ class Red(
     async def is_admin(self, member: discord.Member) -> bool:
         """Checks if a member is an admin of their guild."""
         try:
-            member_snowflakes = member._roles  # DEP-WARN
             for snowflake in await self._config.guild(member.guild).admin_role():
-                if member_snowflakes.has(snowflake):  # Dep-WARN
+                if member.get_role(snowflake) is not None:
                     return True
         except AttributeError:  # someone passed a webhook to this
             pass
@@ -1329,12 +1328,11 @@ class Red(
     async def is_mod(self, member: discord.Member) -> bool:
         """Checks if a member is a mod or admin of their guild."""
         try:
-            member_snowflakes = member._roles  # DEP-WARN
             for snowflake in await self._config.guild(member.guild).admin_role():
-                if member_snowflakes.has(snowflake):  # DEP-WARN
+                if member.get_role(snowflake) is not None:
                     return True
             for snowflake in await self._config.guild(member.guild).mod_role():
-                if member_snowflakes.has(snowflake):  # DEP-WARN
+                if member.get_role(snowflake) is not None:
                     return True
         except AttributeError:  # someone passed a webhook to this
             pass
@@ -1638,15 +1636,20 @@ class Red(
 
         return await destination.send(content=content, **kwargs)
 
-    def add_cog(self, cog: commands.Cog):
+    def add_cog(self, cog: commands.Cog, *, override: bool = False):
         if not isinstance(cog, commands.Cog):
             raise RuntimeError(
                 f"The {cog.__class__.__name__} cog in the {cog.__module__} package does "
                 f"not inherit from the commands.Cog base class. The cog author must update "
                 f"the cog to adhere to this requirement."
             )
-        if cog.__cog_name__ in self.cogs:
-            raise RuntimeError(f"There is already a cog named {cog.__cog_name__} loaded.")
+        existing = self.cogs.get(cog.__cog_name__)
+
+        if existing is not None:
+            if not override:
+                raise RuntimeError(f"There is already a cog named {cog.__cog_name__} loaded.")
+            self.remove_cog(cog.__cog_name__)
+
         if not hasattr(cog, "requires"):
             commands.Cog.__init__(cog)
 
