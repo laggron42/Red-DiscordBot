@@ -6,6 +6,15 @@ from redbot.core.arke.backends.sqlite import SQLiteBackend
 from redbot.core.arke.backends.postgresql import PostgreSQLBackend
 from redbot.core.arke.backends.mysql import MySQLBackend
 
+__all__ = (
+    "BackendType",
+    "ArkeBackend",
+    "SQLiteBackend",
+    "PostgreSQLBackend",
+    "MySQLBackend",
+    "get_backend",
+)
+
 
 class BackendType(Enum):
     SQLITE = 0
@@ -20,10 +29,6 @@ class BackendType(Enum):
 
 def get_backend(type: BackendType) -> Type[ArkeBackend]:
     try:
-        return {
-            0: SQLiteBackend,
-            1: PostgreSQLBackend,
-            2: MySQLBackend
-        }[type.value]
+        return {0: SQLiteBackend, 1: PostgreSQLBackend, 2: MySQLBackend}[type.value]
     except KeyError:
         raise ValueError(f"Backend {type.name} is not supported yet.")

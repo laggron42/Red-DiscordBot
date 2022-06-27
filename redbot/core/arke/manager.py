@@ -17,6 +17,8 @@ if TYPE_CHECKING:
 log = logging.getLogger("red.arke")
 arke_instance = None
 
+__all__ = ("ArkeExtension", "RedArkeManager")
+
 
 class ArkeExtension:
     connection: "BaseDBAsyncClient"

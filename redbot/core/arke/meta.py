@@ -2,6 +2,8 @@ from typing import Optional, Sequence
 
 from redbot.core.arke.backends import BackendType
 
+__all__ = ("ArkeMetaBase",)
+
 
 class ArkeMetaBase:
     """
