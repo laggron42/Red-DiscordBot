@@ -6,26 +6,31 @@ from typing import TYPE_CHECKING, Type, List
 from tortoise import Tortoise
 from tortoise.connection import connections
 
-from redbot.core.data_manager import cog_data_path
 from redbot.core.arke.meta import ArkeMetaBase
-from redbot.core.arke.enums import Backend
+from redbot.core.arke.backends import get_backend, BackendType
 
 if TYPE_CHECKING:
     from importlib.machinery import ModuleSpec
     from tortoise.backends.base.client import BaseDBAsyncClient
+    from redbot.core.arke.backends import ArkeBackend
 
-log = logging.getLogger("red.arke.core")
+log = logging.getLogger("red.arke")
 arke_instance = None
 
 
 class ArkeExtension:
     connection: "BaseDBAsyncClient"
+    backend: "ArkeBackend"
 
     def __init__(self, extension: "ModuleSpec", meta: Type[ArkeMetaBase]):
         self.extension = extension
         self.meta = meta()
         if importlib.util.find_spec("modules", extension):
-            self.meta.models_path += ("modules", )
+            self.meta.models_path += ("modules",)
+        if self.meta.backend_requirement:
+            self.backend = get_backend(self.meta.backend_requirement)(self)
+        else:
+            self.backend = None
         self.label = self.meta.app_label or self.extension.name
 
     @property
@@ -42,11 +47,11 @@ class ArkeExtension:
         Tortoise.init_models(paths, app_label=self.label)
         for module in Tortoise.apps[self.label].values():
             module._meta.default_connection = self.label
+            module._meta.db_table = self.meta.table_prefix + module._meta.db_table
         log.debug(
             f"Initialized {len(Tortoise.apps[self.label])} "
-            f"models from module {self.extension.name}"
+            f"models from extension {self.extension.name}"
         )
-        await self.meta.post_init()
 
     def __hash__(self):
         return hash(self.extension)
@@ -55,10 +60,11 @@ class ArkeExtension:
 class RedArkeManager:
     def __init__(self):
         self._extensions: List[ArkeExtension] = []
-        self.preferred_backend: Backend = Backend.sqlite
-        self._init_routers: bool = False
+        self.preferred_backend: BackendType = BackendType.SQLITE
         connections._db_config = {}
-        log.debug(f"Arke initialized. Preferred backend: {self.preferred_backend}")
+        Tortoise._init_routers()
+        Tortoise._inited = True
+        log.debug(f"Arke initialized. Preferred backend: {self.preferred_backend.name}")
 
     @classmethod
     @property
@@ -85,29 +91,32 @@ class RedArkeManager:
             )
 
         arke_ext = ArkeExtension(extension, meta)
+        if not arke_ext.backend:
+            arke_ext.backend = get_backend(self.preferred_backend)(arke_ext)
+
+        # Tortoise was designed for apps where the full config is known before starting all the
+        # backends together. To properly support Red's modularity, Tortoise.init() is not called
+        # and we try to start backends one by one, mimicking Tortoise's normal behaviour
         connections._db_config[arke_ext.label] = {
-            "engine": self.preferred_backend.value,
-            "credentials": {
-                "file_path": cog_data_path(raw_name=arke_ext.data_path) / "arke.sqlite3"
-            },
+            "engine": arke_ext.backend.tortoise_backend_path,
+            "credentials": arke_ext.backend.tortoise_settings(),
         }
         connection = connections.get(arke_ext.label)
-        log.debug(f"Creating db connection to {self.preferred_backend} for {arke_ext.label}")
         await connection.create_connection(with_db=True)
+        log.debug(f"Created db connection to {arke_ext.backend} for {arke_ext.label}")
         arke_ext.connection = connection
+
         await arke_ext.init()
         Tortoise._build_initial_querysets()
         self._extensions.append(arke_ext)
-        if not self._init_routers:
-            Tortoise._init_routers()
-            log.debug("Initialized routers")
-            self._init_routers = True
-        Tortoise._inited = True
-        await Tortoise.generate_schemas()
+
+        await Tortoise.generate_schemas()  # TODO: remove, use migrations instead
+        await arke_ext.meta.post_init()
         return True
 
     async def unregister_extension(self, extension: ArkeExtension):
         await extension.meta.pre_close()
         await extension.connection.close()
+        log.debug(f"Closed db connection to {extension.backend} for {extension.label}")
         await extension.meta.post_close()
         self._extensions.remove(extension)

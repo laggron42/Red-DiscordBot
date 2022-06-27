@@ -1,6 +1,6 @@
 from typing import Optional, Sequence
 
-from redbot.core.arke.enums import Backend
+from redbot.core.arke.backends import BackendType
 
 
 class ArkeMetaBase:
@@ -15,7 +15,7 @@ class ArkeMetaBase:
         A custom label for your application. Defaults to the module name.
     database_path: str
         The folder where the database will be saved. Defaults to the app label
-    engine_requirement: Optional[Backend]
+    backend_requirement: Optional[BackendType]
         You may add a backend as a hard requirement, which ensures your cog will load
         with the database you specified. If the database is not installed, the package will not
         load. If you omit this, any backend will be accepted (most likely SQLite).
@@ -33,7 +33,7 @@ class ArkeMetaBase:
 
     app_label: str = None
     database_path: str = None
-    engine_requirement: Optional[Backend] = None
+    backend_requirement: Optional[BackendType] = None
     table_prefix: str = ""
     models_path: Sequence[str] = ()
     discord_models: bool = True
