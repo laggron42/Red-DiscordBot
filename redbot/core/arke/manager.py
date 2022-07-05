@@ -27,8 +27,8 @@ class ArkeExtension:
     def __init__(self, extension: "ModuleSpec", meta: Type[ArkeMetaBase]):
         self.extension = extension
         self.meta = meta()
-        if importlib.util.find_spec("modules", extension):
-            self.meta.models_path += ("modules",)
+        if importlib.util.find_spec("models", extension):
+            self.meta.models_path += ("models",)
         if self.meta.backend_requirement:
             self.backend = get_backend(self.meta.backend_requirement)(self)
         else:
