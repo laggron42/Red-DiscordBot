@@ -1,7 +1,7 @@
 from typing import TYPE_CHECKING, Generic, TypedDict, TypeVar
 
 if TYPE_CHECKING:
-    from redbot.core.arke.core import ArkeExtension
+    from redbot.core.arke.manager import ArkeExtension
 
 Settings = TypeVar("Settings", bound=TypedDict)
 
