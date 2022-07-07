@@ -27,10 +27,6 @@ class ArkeMetaBase:
         A list of paths where models can be found. By default, Arke will look in the package itself
         (anything imported in ``__init__.py``) and ``models`` (a python file or a submodule). Any
         model not importable from these paths will not be loaded.
-    discord_models: bool
-        Specify if you want to enable Discord models in your database (allows relations with the
-        supported discord models). Set to `False` to prevent creating these models. Defaults to
-        `True`.
     """
 
     app_label: str = None
@@ -38,7 +34,6 @@ class ArkeMetaBase:
     backend_requirement: Optional[BackendType] = None
     table_prefix: str = ""
     models_path: Sequence[str] = ()
-    discord_models: bool = True
 
     async def pre_init(self):
         pass
