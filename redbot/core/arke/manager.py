@@ -3,7 +3,7 @@ import importlib.util
 
 from typing import TYPE_CHECKING, Type, List
 
-from tortoise import Tortoise
+from tortoise import Tortoise, __version__ as tortoise_version
 from tortoise.connection import connections
 
 from redbot.core.arke.meta import ArkeMetaBase
@@ -66,7 +66,10 @@ class RedArkeManager:
         connections._db_config = {}
         Tortoise._init_routers()
         Tortoise._inited = True
-        log.debug(f"Arke initialized. Preferred backend: {self.preferred_backend.name}")
+        log.debug(
+            f"Arke initialized, using Tortoise {tortoise_version}. "
+            f"Preferred backend: {self.preferred_backend.name}"
+        )
 
     @classmethod
     @property
